@@ -1,10 +1,3 @@
----
-title: "Style Portfolio P/E Ratio Analysis"
-author: "Your Name"
-date: "`r Sys.Date()`"
-output: html_document
----
-
 # **Project Overview**
 This project analyzes the **style portfolio P/E ratio** over time across different markets.  
 Portfolios are constructed based on the **Fama-French 5 factors (FF5) plus Momentum**, rebalanced **monthly**.  
