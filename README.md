@@ -19,6 +19,8 @@ The data is sourced from **Datastream** (DFO), using the following codes for tim
 For **industry classification**, the following codes are used in static requests:  
 - **ICBIN**, **ICBSC**, **ICBSN**  
 
+Due to the large dataset size, only a summary table (tracking the number of stocks per country per year across 30 countries) is included here. Please contact me if you need additional data for replication.
+
 # **Main Files and Code Structure**
 - **Primary analysis**: Conducted in `Style Portfolio Analysis.RMD`  
 - **Data cleaning scripts**: Other Rmd files handle preprocessing and merging  
