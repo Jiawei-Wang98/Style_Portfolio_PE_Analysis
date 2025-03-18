@@ -44,9 +44,13 @@ Due to the large dataset size, only a summary table (tracking the number of stoc
 - The **results folder** contains time series plots of style portfolio P/E values for each country  
 
 Example  
-<p align="center">
-    <img src="results/countries_pe/forward_pe_time_series_US_MarketCap.png" width="600" style="background:white; padding:10px; border-radius:10px;">
-</p>
+<table>
+  <tr>
+    <td style="background-color: white; padding: 10px;">
+      <img src="results/countries_pe/forward_pe_time_series_US_MarketCap.png" width="600">
+    </td>
+  </tr>
+</table>
 
 # **Main Dataset**
 The **`merged_data`** file serves as the primary dataset.  
