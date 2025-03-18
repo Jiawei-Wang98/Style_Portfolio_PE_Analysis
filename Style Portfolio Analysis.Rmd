@@ -1,0 +1,670 @@
+---
+title: "Style Portfolio Analysis data clean"
+output: pdf_document
+date: "2024-03-17"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("D:/korean discount project/korea discount group pe analysis")
+```
+
+```{r}
+library(readxl)
+library(ggplot2)
+library(knitr)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(car)
+library(reshape2)
+library(patchwork)
+library(purrr)
+```
+
+```{r}
+# Clear the working directory
+rm(list = ls())
+```
+
+
+```{r cars}
+selected_regions <-c('China','Hongkong','Japan','Korea','Taiwan','US','Vietnam')
+
+countries <- c("Australia", "Austria", "Belgium", "Brazil", "Canada", "Chile", "China", "France", "Germany", "Hongkong", "India", "Indonesia", "Israel", "Italy", "Japan", "Korea", "Malaysia", "Netherland", "New Zealand", "Philippines", "Singapore", "South Africa", "Spain", "Sweden", "Switzerland", "Taiwan", "Thailand", "UK", "US", "Vietnam")
+
+asia_pacific <- c("Australia", "China", "HongKong", "India", "Indonesia", "Japan", "Korea", "Malaysia", "New Zealand", "Philippines", "Singapore", "Taiwan", "Thailand", "Vietnam")
+
+emerging_markets <- c("Brazil", "China","Chile", "India", "Indonesia", "Malaysia", "Philippines", "South Africa", "Thailand", "Vietnam")
+
+developed_markets <- c("Australia", "Austria", "Belgium", "Canada",  "France", "Korea", "Germany", "HongKong", "Israel", "Italy", "Japan", "Netherland", "New Zealand", "Singapore", "South Africa", "Spain", "Sweden", "Switzerland","Taiwan", "Hongkong","UK", "US")
+```
+
+
+```{r}
+date_sequence <- seq(as.Date("1997-03-01"), as.Date("2023-03-01"), by = "month")
+
+# Format the dates to only include year and month (YYYY-MM)
+formatted_dates <- format(date_sequence, "%Y-%m")
+```
+
+Run summary statistics.R script here, which will summarize the sample description
+
+```{r}
+table1_data <- read.csv("results/table1.csv")
+```
+
+Summary statistics for selected regions from 1997-03 to 2023-03
+```{r}
+colnames(table1_data)[1] <- "Country"
+
+current_col_names <- colnames(table1_data)[-1]  # Exclude the first column (Country)
+
+# Remove the "X" prefix and convert to a standard format (e.g., "1996.09" to "1996-09")
+dates_in_cols <- gsub("X", "", current_col_names)
+dates_in_cols <- gsub("\\.", "-", dates_in_cols)
+# Convert the dates to Date objects for comparison
+dates_as_date <- as.Date(paste0(dates_in_cols, "-01"), format = "%Y-%m-%d")
+
+# Define the range of dates to keep
+start_date <- as.Date("1997-03-01")
+end_date <- as.Date("2023-03-01")
+
+# Filter columns that fall within the date range
+cols_to_keep <- which(dates_as_date >= start_date & dates_as_date <= end_date)
+
+# Keep only the "Country" column and the columns within the date range
+table1_data <-table1_data[, c(1, cols_to_keep + 1)]  # +1 because we excluded the first column earlier
+colnames(table1_data)[-1] <- formatted_dates
+
+summary_statistics = table1_data %>% filter(Country %in% selected_regions)
+summary_statistics 
+```
+
+this is created from data cleaning file
+```{r}
+merged_data<- read.csv("results/merged_data.csv")
+```
+
+```{r}
+forward_pe_stats <- merged_data %>%
+  summarise(
+    Q1 = quantile(forward_PE, 0.25, na.rm = TRUE),
+    Q3 = quantile(forward_PE, 0.75, na.rm = TRUE),
+    IQR = Q3 - Q1,
+    Lower_Bound = Q1 - 1.5 * IQR,
+    Upper_Bound = Q3 + 1.5 * IQR
+  )
+
+# Filter out both lower and higher outliers
+merged_data_clean <- merged_data %>%
+  filter(
+    is.na(forward_PE) |  # Keep NA values if any
+    (forward_PE >= forward_pe_stats$Lower_Bound & forward_PE <= forward_pe_stats$Upper_Bound)
+  )
+
+# Step 3: Report the results
+cat("Original number of observations:", nrow(merged_data), "\n")
+cat("Number of observations removed (outliers):", nrow(merged_data) - nrow(merged_data_clean), "\n")
+cat("Remaining observations after removing outliers:", nrow(merged_data_clean), "\n")
+```
+
+```{r}
+# List of metrics to sort on
+metrics <- c("Profitability", "AssetGrowth", "MarketCap", "PB", "Momentum_12M")
+
+# Nested lists to store results for all countries
+all_portfolio_dicts <- list()
+all_date_pe_dfs <- list()
+
+# Loop over each country
+for (country in selected_regions) {
+  cat("Processing country:", country, "\n")
+  
+  # Step 1: Filter merged_data for the current country
+  country_test <- merged_data_clean %>%
+    filter(Country == country)
+  
+  # Skip if no data for the country
+  if (nrow(country_test) == 0) {
+    cat("No data found for", country, ". Skipping...\n")
+    next
+  }
+  
+  # Step 2: Calculate 12-month momentum
+  country_test <- country_test %>%
+    group_by(Type) %>%  # Group by firm (Type)
+    mutate(
+      Price_12M_Ago = lag(price, n = 12, order_by = Date),
+      Momentum_12M = if_else(
+        !is.na(Price_12M_Ago) & Price_12M_Ago != 0,
+        (price / Price_12M_Ago) - 1,
+        NA_real_
+      )
+    ) %>%
+    ungroup() %>%
+    select(-Price_12M_Ago)
+  
+  # Step 3: Process each metric for the current country
+  portfolio_dicts <- list()
+  date_pe_dfs <- list()
+  
+  for (metric in metrics) {
+    cat("  Processing metric:", metric, "\n")
+    
+    # Ensure the data is clean (remove rows with NA for the current metric)
+    country_test_clean <- country_test %>%
+      filter(!is.na(.data[[metric]]))
+    
+    # Skip if no data remains after filtering
+    if (nrow(country_test_clean) == 0) {
+      cat("  No valid data for", metric, "in", country, ". Skipping...\n")
+      next
+    }
+    
+    # Group by Date and create quantiles based on the current metric
+    portfolio_data <- country_test_clean %>%
+      group_by(Date) %>%
+      arrange(.data[[metric]]) %>%  # Sort by the current metric
+      mutate(
+        Quantile = ntile(.data[[metric]], 3),  # Create tertiles (3 quantiles)
+        Quantile_Label = case_when(
+          Quantile == 1 ~ "Low",
+          Quantile == 2 ~ "Medium",
+          Quantile == 3 ~ "High",
+          TRUE ~ NA_character_
+        )
+      ) %>%
+      ungroup()
+    
+    # Create a nested list (dictionary) for portfolio positions
+    portfolio_dict <- list()
+    unique_dates <- unique(portfolio_data$Date)
+    
+    for (date in unique_dates) {
+      date_data <- portfolio_data %>%
+        filter(Date == date)
+      
+      total_firms <- nrow(date_data)
+      
+      if (total_firms >= 10) {
+        high_firms <- date_data %>%
+          filter(Quantile_Label == "High") %>%
+          pull(Type)
+        
+        medium_firms <- date_data %>%
+          filter(Quantile_Label == "Medium") %>%
+          pull(Type)
+        
+        low_firms <- date_data %>%
+          filter(Quantile_Label == "Low") %>%
+          pull(Type)
+        
+        date_quantiles <- list(
+          High = high_firms,
+          Medium = medium_firms,
+          Low = low_firms
+        )
+        
+        portfolio_dict[[as.character(date)]] <- date_quantiles
+      }
+    }
+    
+    # Store the portfolio dictionary for this metric
+    portfolio_dicts[[metric]] <- portfolio_dict
+    
+    # Calculate average forward_PE for each date and quantile
+    date_pe_averages <- list()
+    
+    for (date in names(portfolio_dict)) {
+      high_firms <- portfolio_dict[[date]]$High
+      medium_firms <- portfolio_dict[[date]]$Medium
+      low_firms <- portfolio_dict[[date]]$Low
+      
+      date_data <- country_test %>%
+        filter(Date == date)
+      
+      high_avg_pe <- if (length(high_firms) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% high_firms], na.rm = TRUE)
+      } else {
+        NA_real_
+      }
+      
+      medium_avg_pe <- if (length(medium_firms) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% medium_firms], na.rm = TRUE)
+      } else {
+        NA_real_
+      }
+      
+      low_avg_pe <- if (length(low_firms) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% low_firms], na.rm = TRUE)
+      } else {
+        NA_real_
+      }
+      
+      date_pe_averages[[date]] <- list(
+        High = high_avg_pe,
+        Medium = medium_avg_pe,
+        Low = low_avg_pe
+      )
+    }
+    
+    # Convert to a dataframe
+    date_pe_df <- do.call(rbind, lapply(names(date_pe_averages), function(date) {
+      data.frame(
+        Date = date,
+        High_PE = date_pe_averages[[date]]$High,
+        Medium_PE = date_pe_averages[[date]]$Medium,
+        Low_PE = date_pe_averages[[date]]$Low,
+        stringsAsFactors = FALSE
+      )
+    })) %>%
+      arrange(Date)
+    
+    # Reset row names
+    rownames(date_pe_df) <- NULL
+    
+    # Store the dataframe for this metric
+    date_pe_dfs[[metric]] <- date_pe_df
+  }
+  
+  # Store results for the current country
+  all_portfolio_dicts[[country]] <- portfolio_dicts
+  all_date_pe_dfs[[country]] <- date_pe_dfs
+  
+  # Print summary for the country
+  cat("Completed processing for", country, "\n")
+  cat("Metrics processed:", paste(names(date_pe_dfs), collapse = ", "), "\n\n")
+}
+
+```
+all_date_pe_dfs record the PE values in time dimension of different style portfolio in different countries
+all_portfolio_dicts record the dictionary for the portfolio construction
+
+
+
+
+```{r}
+
+# Loop over each country
+for (country in selected_regions) {
+  cat("Processing country:", country, "\n")
+  
+  # Extract country-specific data from all_date_pe_dfs
+  country_date_pe_dfs <- all_date_pe_dfs[[country]]
+  
+  # Check if data exists for this country
+  if (is.null(country_date_pe_dfs) || length(country_date_pe_dfs) == 0) {
+    cat("No data available for", country, "in all_date_pe_dfs. Skipping...\n")
+    next
+  }
+  
+  # Ensure Date column is of type Date for each metric's dataframe
+  country_date_pe_dfs <- lapply(country_date_pe_dfs, function(df) {
+    if (!is.null(df) && "Date" %in% colnames(df)) {
+      # Convert Date from "YYYY-MM" to Date type by appending "-01"
+      if (is.character(df$Date)) {
+        df$Date <- as.Date(paste0(df$Date, "-01"), format = "%Y-%m-%d")
+      } else {
+        df$Date <- as.Date(df$Date)  # If already a Date-like object, ensure it's Date type
+      }
+    }
+    return(df)
+  })
+  
+  # Loop over each metric and create individual plots
+  for (metric in metrics) {
+    cat("  Generating plot for metric:", metric, "\n")
+    
+    # Check if data exists for this metric
+    if (is.null(country_date_pe_dfs[[metric]]) || nrow(country_date_pe_dfs[[metric]]) == 0) {
+      cat("    No data for", metric, "in", country, ". Skipping...\n")
+      next
+    }
+    
+    # Reshape the data to long format
+    date_pe_long <- country_date_pe_dfs[[metric]] %>%
+      pivot_longer(
+        cols = c(High_PE, Medium_PE, Low_PE),
+        names_to = "Quantile",
+        values_to = "Average_PE"
+      ) %>%
+      mutate(
+        Quantile = case_when(
+          Quantile == "High_PE" ~ "High",
+          Quantile == "Medium_PE" ~ "Medium",
+          Quantile == "Low_PE" ~ "Low",
+          TRUE ~ Quantile
+        )
+      )
+    
+    # Create the ggplot object
+    p <- ggplot(data = date_pe_long, aes(x = Date, y = Average_PE, color = Quantile)) +
+      geom_line(size = 1) +
+      geom_point(size = 2) +
+      labs(
+        title = paste("Time Series of Average Forward PE by Quantile (Sorted by", metric, ") -", country),
+        x = "Date",
+        y = "Average Forward PE",
+        color = "Quantile"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "top"
+      )
+    
+    # Print the plot
+    print(p)
+    
+    # Save the plot
+    ggsave(
+      filename = paste0("results/countries_pe/forward_pe_time_series_", country, "_", metric, ".png"),
+      plot = p,
+      width = 10,
+      height = 6,
+      dpi = 300
+    )
+  }
+  
+  cat("Plotting completed for", country, "\n\n")
+}
+
+cat("Plotting completed for all countries.\n")
+```
+
+```{r}
+em_countries <- intersect(selected_regions, emerging_markets)
+dm_countries <- intersect(selected_regions, developed_markets)
+
+# Print results
+cat("Countries in selected_regions that are Emerging Markets (EM):\n")
+print(em_countries)
+
+cat("Countries in selected_regions that are Developed Markets (DM):\n")
+print(dm_countries)
+
+```
+```{r}
+grouped_portfolio_dicts <- list()
+# Get all unique dates across all regions and metrics
+all_dates <- unique(unlist(lapply(all_portfolio_dicts, function(region_dict) {
+  lapply(region_dict, function(metric_dict) {
+    names(metric_dict)
+  })
+})))
+
+# Loop over each metric
+for (metric in metrics) {
+  cat("Processing metric:", metric, "\n")
+  
+  # Initialize sublist for this metric
+  grouped_portfolio_dicts[[metric]] <- list()
+  
+  # Loop over each date
+  for (date in all_dates) {
+    # Initialize portfolios for EM and DM
+    em_high <- c()
+    em_medium <- c()
+    em_low <- c()
+    dm_high <- c()
+    dm_medium <- c()
+    dm_low <- c()
+    
+    # Aggregate stocks from EM and DM countries
+    for (region in selected_regions) {
+      if (!is.null(all_portfolio_dicts[[region]][[metric]][[date]])) {
+        stocks <- all_portfolio_dicts[[region]][[metric]][[date]]
+        
+        if (region %in% em_countries) {
+          em_high <- c(em_high, stocks$High)
+          em_medium <- c(em_medium, stocks$Medium)
+          em_low <- c(em_low, stocks$Low)
+        } else if (region %in% dm_countries) {
+          dm_high <- c(dm_high, stocks$High)
+          dm_medium <- c(dm_medium, stocks$Medium)
+          dm_low <- c(dm_low, stocks$Low)
+        }
+      }
+    }
+    
+    # Store the grouped portfolios for this date
+    grouped_portfolio_dicts[[metric]][[date]] <- list(
+      EM_High = em_high,
+      EM_Medium = em_medium,
+      EM_Low = em_low,
+      DM_High = dm_high,
+      DM_Medium = dm_medium,
+      DM_Low = dm_low
+    )
+  }
+}
+```
+
+grouped_portfolio_dicts record the dictionary for the portfolio construction in developed and emerging market
+
+```{r}
+# Step 2: Create a separate dataframe for PE averages
+portfolio_pe_df <- do.call(rbind, lapply(metrics, function(metric) {
+  cat("Calculating PE averages for metric:", metric, "\n")
+  
+  do.call(rbind, lapply(all_dates, function(date) {
+    # Get the grouped stocks for this metric and date
+    portfolios <- grouped_portfolio_dicts[[metric]][[date]]
+    
+    # Filter merged_data_clean for this date, converting date to match merged_data_clean
+    date_data <- merged_data_clean %>%
+      filter(Date == date)
+    
+    # Calculate average PE for each group
+    data.frame(
+      Metric = metric,
+      Date = date,
+      EM_High_PE = if (length(portfolios$EM_High) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$EM_High], na.rm = TRUE)
+      } else NA_real_,
+      EM_Medium_PE = if (length(portfolios$EM_Medium) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$EM_Medium], na.rm = TRUE)
+      } else NA_real_,
+      EM_Low_PE = if (length(portfolios$EM_Low) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$EM_Low], na.rm = TRUE)
+      } else NA_real_,
+      DM_High_PE = if (length(portfolios$DM_High) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$DM_High], na.rm = TRUE)
+      } else NA_real_,
+      DM_Medium_PE = if (length(portfolios$DM_Medium) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$DM_Medium], na.rm = TRUE)
+      } else NA_real_,
+      DM_Low_PE = if (length(portfolios$DM_Low) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$DM_Low], na.rm = TRUE)
+      } else NA_real_,
+      stringsAsFactors = FALSE
+    )
+  }))
+})) %>%
+  mutate(Date = as.Date(paste0(Date, "-01"), format = "%Y-%m-%d")) %>%
+  arrange(Date, Metric)
+```
+portfolio_pe_df stores the PE averages for DM and EM 
+
+
+```{r}
+# Convert data to long format
+portfolio_pe_long <- portfolio_pe_df %>%
+  pivot_longer(cols = c("EM_High_PE", "EM_Medium_PE", "EM_Low_PE", "DM_High_PE", "DM_Medium_PE", "DM_Low_PE"),
+               names_to = "Category", values_to = "Value") %>%
+  mutate(
+    Region = ifelse(grepl("EM", Category), "EM", "DM"),
+    Level = case_when(
+      grepl("High", Category) ~ "High",
+      grepl("Medium", Category) ~ "Medium",
+      grepl("Low", Category) ~ "Low"
+    )
+  )
+
+# Define color and linetype mapping
+color_mapping <- c("High" = "red", "Medium" = "blue", "Low" = "green")
+linetype_mapping <- c("EM" = "dashed", "DM" = "solid")
+
+# Generate separate plots for each metric
+unique_metrics <- unique(portfolio_pe_long$Metric)
+
+for (metric in unique_metrics) {
+  plot <- ggplot(portfolio_pe_long %>% filter(Metric == metric), 
+                 aes(x = Date, y = Value, color = Level, linetype = Region)) +
+    geom_line() +
+    scale_color_manual(values = color_mapping) +
+    scale_linetype_manual(values = linetype_mapping) +
+    theme_minimal() +
+  
+    labs(title = paste(" Time Series of Average Forward PE by Quantile Sorted by", metric), y = "Value", x = "Date", color = "Level", linetype = "Region")
+  
+  print(plot)  # Display the plot
+}
+```
+
+The PE for China is quite high, that is why the EM is high.
+
+Now I create two group to exclude the China effect
+Group 1 (DM): US and Japan
+Group 2 (EM): Vietnam, Hongkong and Korea 
+This measure is according to the Korea Discount paper
+
+```{r}
+group1<-c('Vietnam','Hongkong','Korea')
+group2<-c('Japan','US')
+
+grouped_portfolio_dicts_v2 <- list()
+# Get all unique dates across all regions and metrics
+all_dates <- unique(unlist(lapply(all_portfolio_dicts, function(region_dict) {
+  lapply(region_dict, function(metric_dict) {
+    names(metric_dict)
+  })
+})))
+
+# Loop over each metric
+for (metric in metrics) {
+  cat("Processing metric:", metric, "\n")
+  
+  # Initialize sublist for this metric
+  grouped_portfolio_dicts[[metric]] <- list()
+  
+  # Loop over each date
+  for (date in all_dates) {
+    # Initialize portfolios for EM and DM
+    em_high <- c()
+    em_medium <- c()
+    em_low <- c()
+    dm_high <- c()
+    dm_medium <- c()
+    dm_low <- c()
+    
+    # Aggregate stocks from EM and DM countries
+    for (region in selected_regions) {
+      if (!is.null(all_portfolio_dicts[[region]][[metric]][[date]])) {
+        stocks <- all_portfolio_dicts[[region]][[metric]][[date]]
+        
+        if (region %in% group1) {
+          em_high <- c(em_high, stocks$High)
+          em_medium <- c(em_medium, stocks$Medium)
+          em_low <- c(em_low, stocks$Low)
+        } else if (region %in% group2) {
+          dm_high <- c(dm_high, stocks$High)
+          dm_medium <- c(dm_medium, stocks$Medium)
+          dm_low <- c(dm_low, stocks$Low)
+        }
+      }
+    }
+    
+    # Store the grouped portfolios for this date
+    grouped_portfolio_dicts_v2[[metric]][[date]] <- list(
+      EM_High = em_high,
+      EM_Medium = em_medium,
+      EM_Low = em_low,
+      DM_High = dm_high,
+      DM_Medium = dm_medium,
+      DM_Low = dm_low
+    )
+  }
+}
+```
+
+```{r}
+# Step 2: Create a separate dataframe for PE averages
+portfolio_pe_df_v2 <- do.call(rbind, lapply(metrics, function(metric) {
+  cat("Calculating PE averages for metric:", metric, "\n")
+  
+  do.call(rbind, lapply(all_dates, function(date) {
+    # Get the grouped stocks for this metric and date
+    portfolios <- grouped_portfolio_dicts_v2[[metric]][[date]]
+    
+    # Filter merged_data_clean for this date, converting date to match merged_data_clean
+    date_data <- merged_data_clean %>%
+      filter(Date == date)
+    
+    # Calculate average PE for each group
+    data.frame(
+      Metric = metric,
+      Date = date,
+      EM_High_PE = if (length(portfolios$EM_High) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$EM_High], na.rm = TRUE)
+      } else NA_real_,
+      EM_Medium_PE = if (length(portfolios$EM_Medium) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$EM_Medium], na.rm = TRUE)
+      } else NA_real_,
+      EM_Low_PE = if (length(portfolios$EM_Low) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$EM_Low], na.rm = TRUE)
+      } else NA_real_,
+      DM_High_PE = if (length(portfolios$DM_High) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$DM_High], na.rm = TRUE)
+      } else NA_real_,
+      DM_Medium_PE = if (length(portfolios$DM_Medium) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$DM_Medium], na.rm = TRUE)
+      } else NA_real_,
+      DM_Low_PE = if (length(portfolios$DM_Low) > 0) {
+        mean(date_data$forward_PE[date_data$Type %in% portfolios$DM_Low], na.rm = TRUE)
+      } else NA_real_,
+      stringsAsFactors = FALSE
+    )
+  }))
+})) %>%
+  mutate(Date = as.Date(paste0(Date, "-01"), format = "%Y-%m-%d")) %>%
+  arrange(Date, Metric)
+```
+
+```{r}
+# Convert data to long format
+portfolio_pe_long_v2 <- portfolio_pe_df_v2 %>%
+  pivot_longer(cols = c("EM_High_PE", "EM_Medium_PE", "EM_Low_PE", "DM_High_PE", "DM_Medium_PE", "DM_Low_PE"),
+               names_to = "Category", values_to = "Value") %>%
+  mutate(
+    Region = ifelse(grepl("EM", Category), "EM", "DM"),
+    Level = case_when(
+      grepl("High", Category) ~ "High",
+      grepl("Medium", Category) ~ "Medium",
+      grepl("Low", Category) ~ "Low"
+    )
+  )
+
+# Define color and linetype mapping
+color_mapping <- c("High" = "red", "Medium" = "blue", "Low" = "green")
+linetype_mapping <- c("EM" = "dashed", "DM" = "solid")
+
+# Generate separate plots for each metric
+unique_metrics <- unique(portfolio_pe_long_v2$Metric)
+
+for (metric in unique_metrics) {
+  plot <- ggplot(portfolio_pe_long_v2 %>% filter(Metric == metric), 
+                 aes(x = Date, y = Value, color = Level, linetype = Region)) +
+    geom_line() +
+    scale_color_manual(values = color_mapping) +
+    scale_linetype_manual(values = linetype_mapping) +
+    theme_minimal() +
+  
+    labs(title = paste(" Time Series of Average Forward PE by Quantile Sorted by", metric), y = "Value", x = "Date", color = "Level", linetype = "Region")
+  
+  print(plot)  # Display the plot
+}
+```
+

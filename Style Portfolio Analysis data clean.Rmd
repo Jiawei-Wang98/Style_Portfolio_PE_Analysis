@@ -1,0 +1,309 @@
+---
+title: "Style Portfolio Analysis data clean"
+output: pdf_document
+date: "2024-03-17"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("D:/korean discount project/korea discount group pe analysis")
+```
+
+```{r}
+library(readxl)
+library(ggplot2)
+library(knitr)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(car)
+library(reshape2)
+library(purrr)
+```
+
+```{r}
+# Clear the working directory
+rm(list = ls())
+```
+
+
+```{r cars}
+selected_regions <-c('China','Hongkong','Japan','Korea','Taiwan','US','Vietnam')
+
+countries <- c("Australia", "Austria", "Belgium", "Brazil", "Canada", "Chile", "China", "France", "Germany", "Hongkong", "India", "Indonesia", "Israel", "Italy", "Japan", "Korea", "Malaysia", "Netherland", "New Zealand", "Philippines", "Singapore", "South Africa", "Spain", "Sweden", "Switzerland", "Taiwan", "Thailand", "UK", "US", "Vietnam")
+
+asia_pacific <- c("Australia", "China", "HongKong", "India", "Indonesia", "Japan", "Korea", "Malaysia", "New Zealand", "Philippines", "Singapore", "Taiwan", "Thailand", "Vietnam")
+
+emerging_markets <- c("Brazil", "China","Chile", "India", "Indonesia", "Korea", "Malaysia", "Philippines", "South Africa", "Taiwan", "Thailand", "Vietnam")
+
+developed_markets <- c("Australia", "Austria", "Belgium", "Canada",  "France", "Germany", "HongKong", "Israel", "Italy", "Japan", "Netherland", "New Zealand", "Singapore", "South Africa", "Spain", "Sweden", "Switzerland", "UK", "US")
+```
+
+
+```{r}
+date_sequence <- seq(as.Date("1997-03-01"), as.Date("2023-03-01"), by = "month")
+
+# Format the dates to only include year and month (YYYY-MM)
+formatted_dates <- format(date_sequence, "%Y-%m")
+```
+
+Run summary statistics.R script here, which will summarize the sample description
+
+```{r}
+table1_data <- read.csv("results/table1.csv")
+```
+
+Summary statistics for selected regions from 1997-03 to 2023-03
+```{r}
+colnames(table1_data)[1] <- "Country"
+
+current_col_names <- colnames(table1_data)[-1]  # Exclude the first column (Country)
+
+# Remove the "X" prefix and convert to a standard format (e.g., "1996.09" to "1996-09")
+dates_in_cols <- gsub("X", "", current_col_names)
+dates_in_cols <- gsub("\\.", "-", dates_in_cols)
+# Convert the dates to Date objects for comparison
+dates_as_date <- as.Date(paste0(dates_in_cols, "-01"), format = "%Y-%m-%d")
+
+# Define the range of dates to keep
+start_date <- as.Date("1997-03-01")
+end_date <- as.Date("2023-03-01")
+
+# Filter columns that fall within the date range
+cols_to_keep <- which(dates_as_date >= start_date & dates_as_date <= end_date)
+
+# Keep only the "Country" column and the columns within the date range
+table1_data <-table1_data[, c(1, cols_to_keep + 1)]  # +1 because we excluded the first column earlier
+colnames(table1_data)[-1] <- formatted_dates
+
+summary_statistics = table1_data %>% filter(Country %in% selected_regions)
+summary_statistics 
+```
+
+
+for each country, create a dataframe to store the data
+
+```{r}
+# Initialize a list to store data frames for each country
+country_merged_data <- list()
+
+# Loop over each country
+for (country in selected_regions) {
+  #--------------new-----------
+  # Read country data
+  # Read the new country data
+  data_file <- paste0(country, '.xlsx')
+  country_data <- read_excel(paste0('FF5 data collection/', data_file))
+  
+  # Rename columns 3 onwards (assuming they are Excel date serial numbers)
+  colnames(country_data)[3:ncol(country_data)] <- sapply(colnames(country_data)[3:ncol(country_data)], function(x) {
+    # Safely check if the column name is numeric using suppressWarnings and is.na checks
+    numeric_val <- suppressWarnings(as.numeric(x))
+    if (!is.na(numeric_val)) {
+      # Convert the numeric value to date (Excel uses 1900 as the origin for date serial numbers)
+      format(as.Date(numeric_val, origin = "1899-12-30"), "%Y-%m")
+    } else {
+      x  # Return as-is if it's not numeric
+    }
+  })
+  
+  # Add the Type column by cleaning the Code column
+  country_data$Type <- gsub("\\(.*?\\)", "", country_data$Code)
+  
+  # Read the old country data
+  old_data_file <- paste0(country, '.xlsx')
+  old_country_data <- read_excel(paste0('other data collection/', old_data_file))
+  
+  # Rename columns 3 onwards (assuming they are Excel date serial numbers)
+  colnames(old_country_data)[3:ncol(old_country_data)] <- sapply(colnames(old_country_data)[3:ncol(old_country_data)], function(x) {
+    # Safely check if the column name is numeric using suppressWarnings and is.na checks
+    numeric_val <- suppressWarnings(as.numeric(x))
+    if (!is.na(numeric_val)) {
+      # Convert the numeric value to date (Excel uses 1900 as the origin for date serial numbers)
+      format(as.Date(numeric_val, origin = "1899-12-30"), "%Y-%m")
+    } else {
+      x  # Return as-is if it's not numeric
+    }
+  })
+  
+  # Add the Type column by cleaning the Code column
+  old_country_data$Type <- gsub("\\(.*?\\)", "", old_country_data$Code)
+  
+  # Find common columns between the two datasets
+  common_cols <- intersect(colnames(country_data), colnames(old_country_data))
+  
+  # Keep only the common columns in both datasets
+  country_data <- country_data %>% select(all_of(common_cols))
+  old_country_data <- old_country_data %>% select(all_of(common_cols))
+  
+  # Concatenate the two datasets vertically
+  combined_data <- bind_rows(country_data, old_country_data)
+  
+  
+  # Merge country and country_industry data on 'Type'
+  country_merged_data[[country]] <- combined_data
+}
+
+# Save each country's merged data frame as a separate object
+for (i in seq_along(selected_regions)) {
+  country <-selected_regions[i]
+  assign(country, country_merged_data[[country]])
+}
+```
+
+
+
+
+```{r}
+# Assuming country_merged_data is a named list where each element is a dataframe for a country
+# Initialize a new list to store the wide-format data for each country
+country_wide_data <- list()
+
+# Define the valid codes and their new names
+valid_codes <- c("IBP", "PTBV", "WC08001", "WC08316", "WC08621")
+code_mapping <- c(
+  "IBP" = "price",
+  "PTBV" = "PB",
+  "WC08001" = "MarketCap",
+  "WC08316" = "Profitability",
+  "WC08621" = "AssetGrowth"
+)
+
+# Process each country
+for (country in selected_regions) {
+  cat("Processing country:", country, "\n")
+  
+  # Step 1: Extract the country's data from country_merged_data
+  country_data <- country_merged_data[[country]]
+  
+  if (is.null(country_data) || nrow(country_data) == 0) {
+    cat("No data found for", country, "or data is empty. Skipping...\n")
+    next
+  }
+  
+  # Step 2: Extract code from the 'Code' column
+  country_data <- country_data %>%
+    mutate(
+      Code_Extracted = str_extract(Code, "\\([^\\)]+\\)")  # Extract the part inside parentheses
+    ) %>%
+    mutate(
+      Code_Extracted = gsub("[\\(\\)]", "", Code_Extracted)  # Remove the parentheses
+    )
+  
+  # Step 3: Define date columns (from the third column onward, excluding Code_Extracted)
+  date_columns <- colnames(country_data)[3:(ncol(country_data)-2)]  # Adjust to exclude only Code_Extracted
+  
+  # Step 4: Pivot the data to long format
+  long_data <- country_data %>%
+    pivot_longer(
+      cols = all_of(date_columns),  # Select the date columns
+      names_to = "Date",            # New column for the dates
+      values_to = "Value"           # New column for the values
+    ) %>%
+    select(Type, Date, Code_Extracted, Value)  # Keep required columns for now
+  
+  # Step 5: Filter rows where Code_Extracted is in the valid codes list
+  long_data <- long_data %>%
+    filter(Code_Extracted %in% valid_codes)
+  
+  # Step 6: Rename the codes using case_when
+  long_data <- long_data %>%
+    mutate(
+      Code_Extracted = case_when(
+        Code_Extracted == "IBP" ~ "price",
+        Code_Extracted == "PTBV" ~ "PB",
+        Code_Extracted == "WC08001" ~ "MarketCap",
+        Code_Extracted == "WC08316" ~ "Profitability",
+        Code_Extracted == "WC08621" ~ "AssetGrowth",
+        TRUE ~ Code_Extracted  # Shouldn't happen since we filtered already
+      )
+    )
+  
+  # Step 7: Pivot the data to wide format, with each renamed Code as a column
+  wide_data <- long_data %>%
+    pivot_wider(
+      names_from = Code_Extracted,  # Each renamed Code becomes a column
+      values_from = Value           # Values go into the corresponding Code column
+    )
+  
+  # Step 8: Ensure Date is the first column
+  wide_data <- wide_data %>%
+    select(Date, everything())
+  
+  # Step 9: Store the wide-format data in country_wide_data
+  country_wide_data[[country]] <- wide_data
+  
+  # Optional: Print some information about the result
+  cat("Completed processing for", country, "\n")
+  cat("Number of rows in wide data:", nrow(wide_data), "\n")
+  cat("Columns in wide data:", paste(colnames(wide_data), collapse = ", "), "\n\n")
+}
+
+```
+
+```{r}
+# Step 1: Add a Country column to each dataframe in country_wide_data
+# This helps identify which country each row belongs to after concatenation
+country_wide_data <- lapply(names(country_wide_data), function(country) {
+  df <- country_wide_data[[country]]
+  df$Country <- country  # Add Country column
+  # Move Country column to the first position
+  df <- df %>% select(Country, everything())
+  return(df)
+}) %>% setNames(names(country_wide_data))  # Preserve the names of the list
+
+# Step 2: Concatenate all dataframes into a single dataframe
+combined_wide_data <- bind_rows(country_wide_data)
+
+```
+
+```{r}
+# the dataset created from previous project
+firm_PE <- read.csv("temp data/firm_PE.csv")
+```
+
+```{r}
+# Assuming firm_PE is your dataframe
+firm_PE <- firm_PE %>%
+  mutate(
+    # Remove the "X" prefix and replace "." with "-"
+    Date = str_replace_all(Month, "^X", ""),  # Remove "X" from the start
+    Date = str_replace_all(Date, "\\.", "-"), # Replace "." with "-"
+    # Convert to Date object with a placeholder day
+    Date = as.Date(paste0(Date, "-01"), format = "%Y-%m-%d"),
+    # Format back to YYYY-MM for display (this converts it back to character)
+    Date = format(Date, "%Y-%m")
+  ) %>%
+  # Remove the original Month column
+  select(-Month)
+```
+
+```{r}
+# Define the columns to keep
+columns_to_keep <- c("Date", "Type", "Industry", "forward_PE", "trailing_PE")
+
+# Check which of the desired columns exist in firm_PE
+existing_columns <- columns_to_keep[columns_to_keep %in% colnames(firm_PE)]
+
+# Keep only the specified columns that exist
+firm_PE <- firm_PE %>%
+  select(all_of(existing_columns))
+```
+
+
+```{r}
+# Perform an inner join on 'Type' and 'Date'
+merged_data <- inner_join(combined_wide_data, firm_PE, by = c("Type", "Date"))
+```
+
+```{r}
+output_path <- "results/merged_data.csv"  # Specify the output file path
+write.csv(merged_data, file = output_path, row.names = FALSE)
+```
+
+
+
+
+
+
