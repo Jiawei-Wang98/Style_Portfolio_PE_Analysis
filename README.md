@@ -1,10 +1,10 @@
 # **Project Overview**
 This project analyzes the **style portfolio P/E ratio** over time across different markets.  
 Portfolios are constructed based on the **Fama-French 5 factors (FF5) plus Momentum**, rebalanced **monthly**.  
-The markets covered include **China, Taiwan, Hong Kong, the US, Japan, Korea, and Vietnam**.  
+The markets covered include **China, Taiwan, Hong Kong, the US, Japan, Korea, and Vietnam**.  (can be extended to other markets)
 
 # **Data Source**
-The data is sourced from **Datastream**, using the following codes for time series requests:
+The data is sourced from **Datastream** (DFO), using the following codes for time series requests:
 
 - **EPS1TR12** – Trailing EPS  
 - **EPS1FD12** – Forward EPS  
@@ -21,7 +21,7 @@ For **industry classification**, the following codes are used in static requests
 
 # **Main Files and Code Structure**
 - **Primary analysis**: Conducted in `Style Portfolio Analysis.RMD`  
-- **Data cleaning scripts**: Other R scripts handle preprocessing and merging  
+- **Data cleaning scripts**: Other Rmd files handle preprocessing and merging  
 
 ## **Key Components in `Style Portfolio Analysis.RMD`**
 ### **Dictionaries**
